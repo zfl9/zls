@@ -159,9 +159,7 @@ fn getMacroSlice(allocator: std.mem.Allocator, c_macros: StringStringMap) ![]con
 }
 
 fn addPackage(allocator: std.mem.Allocator, packages: *StringStringMap, pkg_name: []const u8, pkg_path: []const u8) !void {
-    const v = try packages.getOrPut(allocator, pkg_name);
-    if (!v.found_existing)
-        v.value_ptr.* = pkg_path;
+    _ = try packages.getOrPutValue(allocator, pkg_name, pkg_path);
 }
 
 fn addMacro(allocator: std.mem.Allocator, c_macros: *StringStringMap, name_and_value: []const u8) !void {
