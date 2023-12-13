@@ -347,6 +347,7 @@ fn loadBuildAssociatedConfiguration(allocator: std.mem.Allocator, build_file: Bu
 
     const build_file_path = try URI.parse(allocator, build_file.uri);
     defer allocator.free(build_file_path);
+
     const config_file_path = try std.fs.path.resolve(allocator, &.{ build_file_path, "../zls.build.json" });
     defer allocator.free(config_file_path);
 
@@ -411,6 +412,10 @@ fn loadBuildConfiguration(
         }
     }
 
+    const args_display = try std.mem.join(allocator, " ", args.items);
+    log.info("{s}", .{args_display});
+    allocator.free(args_display);
+
     const zig_run_result = try std.ChildProcess.exec(.{
         .allocator = arena_allocator,
         .argv = args.items,
@@ -444,6 +449,15 @@ fn loadBuildConfiguration(
         allocator.free(pkg.path);
         pkg.path = pkg_abs_path;
     }
+
+    for (build_config.packages) |pkg|
+        log.info("package: {s}, path: {s}", .{ pkg.name, pkg.path });
+
+    for (build_config.include_dirs) |dir|
+        log.info("include directory: {s}", .{dir});
+
+    for (build_config.c_macros) |macro|
+        log.info("c macro: {s}", .{macro});
 
     return build_config;
 }
@@ -501,11 +515,14 @@ fn createBuildFile(self: *const DocumentStore, uri: Uri) error{OutOfMemory}!Buil
         .config = .{
             .packages = &.{},
             .include_dirs = &.{},
+            .c_macros = &.{},
         },
     };
     errdefer build_file.deinit(self.allocator);
 
     if (loadBuildAssociatedConfiguration(self.allocator, build_file)) |config| {
+        log.info("config associated with build file {s} is loaded", .{build_file.uri});
+
         build_file.build_associated_config = config;
 
         if (config.relative_builtin_path) |relative_builtin_path| blk: {
@@ -516,7 +533,7 @@ fn createBuildFile(self: *const DocumentStore, uri: Uri) error{OutOfMemory}!Buil
         }
     } else |err| {
         if (err != error.FileNotFound) {
-            log.debug("Failed to load config associated with build file {s} (error: {})", .{ build_file.uri, err });
+            log.err("Failed to load config associated with build file {s} (error: {})", .{ build_file.uri, err });
         }
     }
 
@@ -817,10 +834,16 @@ pub fn resolveCImport(self: *DocumentStore, handle: Handle, node: Ast.Node.Index
         else
             &.{};
 
+        const c_macros: []const []const u8 = if (handle.associated_build_file) |build_file_uri|
+            self.build_files.get(build_file_uri).?.config.c_macros
+        else
+            &.{};
+
         var result = (try translate_c.translate(
             self.allocator,
             self.config.*,
             include_dirs,
+            c_macros,
             source,
         )) orelse return null;
 

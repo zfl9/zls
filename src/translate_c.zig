@@ -129,7 +129,7 @@ pub const Result = union(enum) {
 /// returns a URI to the generated zig file on success or the content of stderr on failure
 /// null indicates a failure which is automatically logged
 /// Caller owns returned memory.
-pub fn translate(allocator: std.mem.Allocator, config: Config, include_dirs: []const []const u8, source: []const u8) error{OutOfMemory}!?Result {
+pub fn translate(allocator: std.mem.Allocator, config: Config, include_dirs: []const []const u8, c_macros: []const []const u8, source: []const u8) error{OutOfMemory}!?Result {
     const file_path = try std.fs.path.join(allocator, &[_][]const u8{ config.global_cache_path.?, "cimport.h" });
     defer allocator.free(file_path);
 
@@ -172,7 +172,7 @@ pub fn translate(allocator: std.mem.Allocator, config: Config, include_dirs: []c
         "-lc",
     };
 
-    const argc = base_args.len + 2 * (include_dirs.len + if (base_include_dirs) |dirs| dirs.len else 0) + 1;
+    const argc = base_args.len + 2 * (include_dirs.len + (if (base_include_dirs) |dirs| dirs.len else 0) + c_macros.len) + 1;
     var argv = try std.ArrayListUnmanaged([]const u8).initCapacity(allocator, argc);
     defer argv.deinit(allocator);
 
@@ -190,7 +190,16 @@ pub fn translate(allocator: std.mem.Allocator, config: Config, include_dirs: []c
         argv.appendAssumeCapacity(include_dir);
     }
 
+    for (c_macros) |macro| {
+        argv.appendAssumeCapacity("-D");
+        argv.appendAssumeCapacity(macro);
+    }
+
     argv.appendAssumeCapacity(file_path);
+
+    const argv_display = try std.mem.join(allocator, " ", argv.items);
+    log.info("{s}", .{argv_display});
+    allocator.free(argv_display);
 
     const result = std.ChildProcess.exec(.{
         .allocator = allocator,

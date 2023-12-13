@@ -10,6 +10,7 @@ const OptionsStep = std.build.OptionsStep;
 pub const BuildConfig = struct {
     packages: []Pkg,
     include_dirs: []const []const u8,
+    c_macros: []const []const u8,
 
     pub const Pkg = struct {
         name: []const u8,
@@ -85,11 +86,14 @@ pub fn main() !void {
     builder.resolveInstallPrefix(null, Builder.DirList{});
     try runBuild(builder);
 
-    var packages = std.ArrayListUnmanaged(BuildConfig.Pkg){};
+    var packages: std.StringArrayHashMapUnmanaged([]const u8) = .{};
     defer packages.deinit(allocator);
 
     var include_dirs: std.StringArrayHashMapUnmanaged(void) = .{};
     defer include_dirs.deinit(allocator);
+
+    var c_macros: std.StringArrayHashMapUnmanaged([]const u8) = .{};
+    defer c_macros.deinit(allocator);
 
     // This scans the graph of Steps to find all `OptionsStep`s then reifies them
     // Doing this before the loop to find packages ensures their `GeneratedFile`s have been given paths
@@ -103,19 +107,63 @@ pub fn main() !void {
     //       Should we error out or keep one step or something similar?
     // We also flatten them, we should probably keep the nested structure.
     for (builder.top_level_steps.items) |tls| {
-        for (tls.step.dependencies.items) |step| {
-            try processStep(allocator, &packages, &include_dirs, step);
-        }
+        try processStep(allocator, &packages, &include_dirs, &c_macros, &tls.step);
     }
 
     try std.json.stringify(
         BuildConfig{
-            .packages = packages.items,
+            .packages = try getPackageSlice(allocator, packages),
             .include_dirs = include_dirs.keys(),
+            .c_macros = try getMacroSlice(allocator, c_macros),
         },
         .{ .whitespace = .{} },
         std.io.getStdOut().writer(),
     );
+}
+
+fn getPackageSlice(allocator: std.mem.Allocator, name2path: std.StringArrayHashMapUnmanaged([]const u8)) ![]BuildConfig.Pkg {
+    var array = try allocator.alloc(BuildConfig.Pkg, name2path.count());
+
+    var i: u32 = 0;
+    var it = name2path.iterator();
+    while (it.next()) |v| {
+        array[i].name = v.key_ptr.*;
+        array[i].path = v.value_ptr.*;
+        i += 1;
+    }
+
+    return array;
+}
+
+fn getMacroSlice(allocator: std.mem.Allocator, name2value: std.StringArrayHashMapUnmanaged([]const u8)) ![]const []const u8 {
+    var array = try allocator.alloc([]const u8, name2value.count());
+
+    var i: u32 = 0;
+    var it = name2value.iterator();
+    while (it.next()) |v| {
+        const name = v.key_ptr.*;
+        const value = v.value_ptr.*;
+        if (value.len <= 0)
+            array[i] = name
+        else
+            array[i] = try std.fmt.allocPrint(allocator, "{s}={s}", .{ name, value });
+        i += 1;
+    }
+
+    return array;
+}
+
+fn addPackage(allocator: std.mem.Allocator, packages: *std.StringArrayHashMapUnmanaged([]const u8), pkg_name: []const u8, pkg_path: []const u8) !void {
+    const v = try packages.getOrPut(allocator, pkg_name);
+    if (!v.found_existing)
+        v.value_ptr.* = pkg_path;
+}
+
+fn addMacro(allocator: std.mem.Allocator, c_macros: *std.StringArrayHashMapUnmanaged([]const u8), name_and_value: []const u8) !void {
+    const sep = std.mem.indexOfScalar(u8, name_and_value, '=');
+    const name = if (sep) |p| name_and_value[0..p] else name_and_value;
+    const value = if (sep) |p| name_and_value[p + 1 ..] else "";
+    try c_macros.put(allocator, name, value);
 }
 
 fn reifyOptions(step: *std.build.Step) anyerror!void {
@@ -136,52 +184,52 @@ fn reifyOptions(step: *std.build.Step) anyerror!void {
 
 fn processStep(
     allocator: std.mem.Allocator,
-    packages: *std.ArrayListUnmanaged(BuildConfig.Pkg),
+    packages: *std.StringArrayHashMapUnmanaged([]const u8),
     include_dirs: *std.StringArrayHashMapUnmanaged(void),
+    c_macros: *std.StringArrayHashMapUnmanaged([]const u8),
     step: *std.build.Step,
 ) anyerror!void {
     if (step.cast(InstallArtifactStep)) |install_exe| {
-        if (install_exe.artifact.root_src) |src| {
-            const maybe_path = switch (src) {
-                .path => |path| path,
-                .generated => |generated| generated.path,
-            };
-            if (maybe_path) |path| try packages.append(allocator, .{ .name = "root", .path = path });
-        }
-
-        try processIncludeDirs(allocator, include_dirs, install_exe.artifact.include_dirs.items);
-        try processPkgConfig(allocator, include_dirs, install_exe.artifact);
-        for (install_exe.artifact.packages.items) |pkg| {
-            try processPackage(allocator, packages, pkg);
-        }
+        try processArtifact(allocator, packages, include_dirs, c_macros, install_exe.artifact);
     } else if (step.cast(LibExeObjStep)) |exe| {
-        if (exe.root_src) |src| {
-            const maybe_path = switch (src) {
-                .path => |path| path,
-                .generated => |generated| generated.path,
-            };
-            if (maybe_path) |path| try packages.append(allocator, .{ .name = "root", .path = path });
+        try processArtifact(allocator, packages, include_dirs, c_macros, exe);
+    }
+
+    for (step.dependencies.items) |unknown_step| {
+        try processStep(allocator, packages, include_dirs, c_macros, unknown_step);
+    }
+}
+
+fn processArtifact(
+    allocator: std.mem.Allocator,
+    packages: *std.StringArrayHashMapUnmanaged([]const u8),
+    include_dirs: *std.StringArrayHashMapUnmanaged(void),
+    c_macros: *std.StringArrayHashMapUnmanaged([]const u8),
+    artifact: *std.build.LibExeObjStep,
+) anyerror!void {
+    if (artifact.root_src) |src| {
+        const maybe_path = switch (src) {
+            .path => |path| path,
+            .generated => |generated| generated.path,
+        };
+        if (maybe_path) |path| {
+            try addPackage(allocator, packages, "root", path);
         }
-        try processIncludeDirs(allocator, include_dirs, exe.include_dirs.items);
-        try processPkgConfig(allocator, include_dirs, exe);
-        for (exe.packages.items) |pkg| {
-            try processPackage(allocator, packages, pkg);
-        }
-    } else {
-        for (step.dependencies.items) |unknown_step| {
-            try processStep(allocator, packages, include_dirs, unknown_step);
-        }
+    }
+    try processMacro(allocator, c_macros, artifact.c_macros.items);
+    try processIncludeDirs(allocator, include_dirs, artifact.include_dirs.items);
+    try processPkgConfig(allocator, include_dirs, artifact);
+    for (artifact.packages.items) |pkg| {
+        try processPackage(allocator, packages, pkg);
     }
 }
 
 fn processPackage(
     allocator: std.mem.Allocator,
-    packages: *std.ArrayListUnmanaged(BuildConfig.Pkg),
+    packages: *std.StringArrayHashMapUnmanaged([]const u8),
     pkg: std.build.Pkg,
 ) anyerror!void {
-    for (packages.items) |package| {
-        if (std.mem.eql(u8, package.name, pkg.name)) return;
-    }
+    if (packages.contains(pkg.name)) return;
 
     // Support Zig 0.9.1
     const source = if (@hasField(std.build.Pkg, "source")) pkg.source else pkg.path;
@@ -192,7 +240,7 @@ fn processPackage(
     };
 
     if (maybe_path) |path| {
-        try packages.append(allocator, .{ .name = pkg.name, .path = path });
+        try addPackage(allocator, packages, pkg.name, path);
     }
 
     if (pkg.dependencies) |dependencies| {
@@ -217,6 +265,18 @@ fn processIncludeDirs(
         };
 
         include_dirs.putAssumeCapacity(candidate, {});
+    }
+}
+
+fn processMacro(
+    allocator: std.mem.Allocator,
+    c_macros: *std.StringArrayHashMapUnmanaged([]const u8),
+    list: []const []const u8,
+) !void {
+    try c_macros.ensureUnusedCapacity(allocator, list.len);
+
+    for (list) |v| {
+        try addMacro(allocator, c_macros, v);
     }
 }
 
