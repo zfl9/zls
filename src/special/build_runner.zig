@@ -7,6 +7,9 @@ const InstallArtifactStep = std.build.InstallArtifactStep;
 const LibExeObjStep = std.build.LibExeObjStep;
 const OptionsStep = std.build.OptionsStep;
 
+const StringVoidMap = std.StringArrayHashMapUnmanaged(void);
+const StringStringMap = std.StringArrayHashMapUnmanaged([]const u8);
+
 pub const BuildConfig = struct {
     packages: []Pkg,
     include_dirs: []const []const u8,
@@ -86,13 +89,15 @@ pub fn main() !void {
     builder.resolveInstallPrefix(null, Builder.DirList{});
     try runBuild(builder);
 
-    var packages: std.StringArrayHashMapUnmanaged([]const u8) = .{};
+    // pkg_name => pkg_path
+    var packages: StringStringMap = .{};
     defer packages.deinit(allocator);
 
-    var include_dirs: std.StringArrayHashMapUnmanaged(void) = .{};
+    var include_dirs: StringVoidMap = .{};
     defer include_dirs.deinit(allocator);
 
-    var c_macros: std.StringArrayHashMapUnmanaged([]const u8) = .{};
+    // macro_name => macro_value("" means no value)
+    var c_macros: StringStringMap = .{};
     defer c_macros.deinit(allocator);
 
     // This scans the graph of Steps to find all `OptionsStep`s then reifies them
@@ -121,11 +126,11 @@ pub fn main() !void {
     );
 }
 
-fn getPackageSlice(allocator: std.mem.Allocator, name2path: std.StringArrayHashMapUnmanaged([]const u8)) ![]BuildConfig.Pkg {
-    var array = try allocator.alloc(BuildConfig.Pkg, name2path.count());
+fn getPackageSlice(allocator: std.mem.Allocator, packages: StringStringMap) ![]BuildConfig.Pkg {
+    var array = try allocator.alloc(BuildConfig.Pkg, packages.count());
 
     var i: u32 = 0;
-    var it = name2path.iterator();
+    var it = packages.iterator();
     while (it.next()) |v| {
         array[i].name = v.key_ptr.*;
         array[i].path = v.value_ptr.*;
@@ -135,31 +140,31 @@ fn getPackageSlice(allocator: std.mem.Allocator, name2path: std.StringArrayHashM
     return array;
 }
 
-fn getMacroSlice(allocator: std.mem.Allocator, name2value: std.StringArrayHashMapUnmanaged([]const u8)) ![]const []const u8 {
-    var array = try allocator.alloc([]const u8, name2value.count());
+fn getMacroSlice(allocator: std.mem.Allocator, c_macros: StringStringMap) ![]const []const u8 {
+    var array = try allocator.alloc([]const u8, c_macros.count());
 
     var i: u32 = 0;
-    var it = name2value.iterator();
+    var it = c_macros.iterator();
     while (it.next()) |v| {
         const name = v.key_ptr.*;
         const value = v.value_ptr.*;
-        if (value.len <= 0)
-            array[i] = name
+        if (value.len > 0)
+            array[i] = try std.fmt.allocPrint(allocator, "{s}={s}", .{ name, value })
         else
-            array[i] = try std.fmt.allocPrint(allocator, "{s}={s}", .{ name, value });
+            array[i] = name;
         i += 1;
     }
 
     return array;
 }
 
-fn addPackage(allocator: std.mem.Allocator, packages: *std.StringArrayHashMapUnmanaged([]const u8), pkg_name: []const u8, pkg_path: []const u8) !void {
+fn addPackage(allocator: std.mem.Allocator, packages: *StringStringMap, pkg_name: []const u8, pkg_path: []const u8) !void {
     const v = try packages.getOrPut(allocator, pkg_name);
     if (!v.found_existing)
         v.value_ptr.* = pkg_path;
 }
 
-fn addMacro(allocator: std.mem.Allocator, c_macros: *std.StringArrayHashMapUnmanaged([]const u8), name_and_value: []const u8) !void {
+fn addMacro(allocator: std.mem.Allocator, c_macros: *StringStringMap, name_and_value: []const u8) !void {
     const sep = std.mem.indexOfScalar(u8, name_and_value, '=');
     const name = if (sep) |p| name_and_value[0..p] else name_and_value;
     const value = if (sep) |p| name_and_value[p + 1 ..] else "";
@@ -184,9 +189,9 @@ fn reifyOptions(step: *std.build.Step) anyerror!void {
 
 fn processStep(
     allocator: std.mem.Allocator,
-    packages: *std.StringArrayHashMapUnmanaged([]const u8),
-    include_dirs: *std.StringArrayHashMapUnmanaged(void),
-    c_macros: *std.StringArrayHashMapUnmanaged([]const u8),
+    packages: *StringStringMap,
+    include_dirs: *StringVoidMap,
+    c_macros: *StringStringMap,
     step: *std.build.Step,
 ) anyerror!void {
     if (step.cast(InstallArtifactStep)) |install_exe| {
@@ -202,9 +207,9 @@ fn processStep(
 
 fn processArtifact(
     allocator: std.mem.Allocator,
-    packages: *std.StringArrayHashMapUnmanaged([]const u8),
-    include_dirs: *std.StringArrayHashMapUnmanaged(void),
-    c_macros: *std.StringArrayHashMapUnmanaged([]const u8),
+    packages: *StringStringMap,
+    include_dirs: *StringVoidMap,
+    c_macros: *StringStringMap,
     artifact: *std.build.LibExeObjStep,
 ) anyerror!void {
     if (artifact.root_src) |src| {
@@ -226,7 +231,7 @@ fn processArtifact(
 
 fn processPackage(
     allocator: std.mem.Allocator,
-    packages: *std.StringArrayHashMapUnmanaged([]const u8),
+    packages: *StringStringMap,
     pkg: std.build.Pkg,
 ) anyerror!void {
     if (packages.contains(pkg.name)) return;
@@ -252,7 +257,7 @@ fn processPackage(
 
 fn processIncludeDirs(
     allocator: std.mem.Allocator,
-    include_dirs: *std.StringArrayHashMapUnmanaged(void),
+    include_dirs: *StringVoidMap,
     dirs: []std.build.LibExeObjStep.IncludeDir,
 ) !void {
     try include_dirs.ensureUnusedCapacity(allocator, dirs.len);
@@ -270,7 +275,7 @@ fn processIncludeDirs(
 
 fn processMacro(
     allocator: std.mem.Allocator,
-    c_macros: *std.StringArrayHashMapUnmanaged([]const u8),
+    c_macros: *StringStringMap,
     list: []const []const u8,
 ) !void {
     try c_macros.ensureUnusedCapacity(allocator, list.len);
@@ -282,7 +287,7 @@ fn processMacro(
 
 fn processPkgConfig(
     allocator: std.mem.Allocator,
-    include_dirs: *std.StringArrayHashMapUnmanaged(void),
+    include_dirs: *StringVoidMap,
     exe: *std.build.LibExeObjStep,
 ) !void {
     for (exe.link_objects.items) |link_object| {
@@ -316,7 +321,7 @@ fn processPkgConfig(
 
 fn getPkgConfigIncludes(
     allocator: std.mem.Allocator,
-    include_dirs: *std.StringArrayHashMapUnmanaged(void),
+    include_dirs: *StringVoidMap,
     exe: *std.build.LibExeObjStep,
     name: []const u8,
 ) !void {

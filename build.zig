@@ -7,7 +7,7 @@ const zls_version = std.builtin.Version{ .major = 0, .minor = 10, .patch = 0 };
 pub fn build(b: *std.build.Builder) !void {
     const current_zig = builtin.zig_version;
     const min_zig = std.SemanticVersion.parse("0.10.0-dev.4057+349d78a44") catch return; // std.zig.tokenizer.Token.Tag.number_literal added
-    if (current_zig.order(min_zig).compare(.lt)) @panic(b.fmt("Your Zig version v{} does not meet the minimum build requirement of v{}", .{current_zig, min_zig}));
+    if (current_zig.order(min_zig).compare(.lt)) @panic(b.fmt("Your Zig version v{} does not meet the minimum build requirement of v{}", .{ current_zig, min_zig }));
 
     const target = b.standardTargetOptions(.{});
 
@@ -19,7 +19,7 @@ pub fn build(b: *std.build.Builder) !void {
 
     const enable_tracy = b.option(bool, "enable_tracy", "Whether tracy should be enabled.") orelse false;
     const coverage = b.option(bool, "generate_coverage", "Generate coverage data with kcov") orelse false;
-    const coverage_output_dir = b.option([]const u8, "coverage_output_dir", "Output directory for coverage data") orelse b.pathJoin(&.{b.install_prefix, "kcov"});
+    const coverage_output_dir = b.option([]const u8, "coverage_output_dir", "Output directory for coverage data") orelse b.pathJoin(&.{ b.install_prefix, "kcov" });
 
     exe_options.addOption(
         shared.ZigVersion,
@@ -53,6 +53,8 @@ pub fn build(b: *std.build.Builder) !void {
 
     const version = v: {
         const version_string = b.fmt("{d}.{d}.{d}", .{ zls_version.major, zls_version.minor, zls_version.patch });
+
+        if (true) break :v version_string;
 
         var code: u8 = undefined;
         const git_describe_untrimmed = b.execAllowFail(&[_][]const u8{
@@ -122,10 +124,10 @@ pub fn build(b: *std.build.Builder) !void {
 
     var tests = b.addTest("tests/tests.zig");
 
-    if(coverage) {
-        const src_dir = b.pathJoin(&.{b.build_root, "src"});
+    if (coverage) {
+        const src_dir = b.pathJoin(&.{ b.build_root, "src" });
         const include_pattern = b.fmt("--include-pattern={s}", .{src_dir});
-        
+
         tests.setExecCmd(&[_]?[]const u8{
             "kcov",
             include_pattern,
