@@ -2642,6 +2642,11 @@ pub fn processJsonRpc(server: *Server, writer: anytype, json: []const u8) !void 
     if (id == .String and std.mem.eql(u8, id.String, "i_haz_configuration")) {
         log.info("Setting configuration...", .{});
 
+        if (true) {
+            log.info("Continued execution will overwrite the original configuration, ignoring it!", .{});
+            return;
+        }
+
         // NOTE: Does this work with other editors?
         // Yes, String ids are officially supported by LSP
         // but not sure how standard this "standard" really is
@@ -2663,8 +2668,7 @@ pub fn processJsonRpc(server: *Server, writer: anytype, json: []const u8) !void 
                             if (s.len == 0) {
                                 if (field.field_type == ?[]const u8) {
                                     break :blk null;
-                                }
-                                else {
+                                } else {
                                     break :blk s;
                                 }
                             }
