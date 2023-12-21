@@ -88,7 +88,7 @@ fn symbolReferencesInternal(
     const tree = handle.tree;
 
     if (depth > 1000) {
-        log.warn("Recursion is too deep (depth: {}) and can lead to a stack overflow!", .{depth});
+        log.debug("Recursion is too deep (depth: {}) and can lead to a stack overflow!", .{depth});
         return;
     }
 
