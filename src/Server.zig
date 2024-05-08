@@ -2640,7 +2640,7 @@ pub fn processJsonRpc(server: *Server, writer: anytype, json: []const u8) !void 
     if (id == .String and std.mem.startsWith(u8, id.String, "apply_edit"))
         return;
     if (id == .String and std.mem.eql(u8, id.String, "i_haz_configuration")) {
-        log.info("Setting configuration...", .{});
+        log.debug("Setting configuration...", .{});
 
         if (true) {
             log.debug("Continued execution will overwrite the original configuration, ignoring it!", .{});
