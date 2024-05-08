@@ -2643,7 +2643,7 @@ pub fn processJsonRpc(server: *Server, writer: anytype, json: []const u8) !void 
         log.info("Setting configuration...", .{});
 
         if (true) {
-            log.info("Continued execution will overwrite the original configuration, ignoring it!", .{});
+            log.debug("Continued execution will overwrite the original configuration, ignoring it!", .{});
             return;
         }
 
@@ -2733,7 +2733,7 @@ pub fn processJsonRpc(server: *Server, writer: anytype, json: []const u8) !void 
 
     const method_map = .{
         .{ "initialized", void, initializedHandler },
-        .{"$/cancelRequest"},
+        // .{"$/cancelRequest"},
         .{"textDocument/willSave"},
         .{ "initialize", requests.Initialize, initializeHandler },
         .{ "shutdown", void, shutdownHandler },
