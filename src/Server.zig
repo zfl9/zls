@@ -1641,6 +1641,12 @@ fn initializeHandler(server: *Server, writer: anytype, id: types.RequestId, req:
     }
 }
 
+fn nullHandler(server: *Server, writer: anytype, id: types.RequestId) !void {
+    _ = id;
+    _ = writer;
+    _ = server;
+}
+
 fn initializedHandler(server: *Server, writer: anytype, id: types.RequestId) !void {
     _ = id;
 
@@ -2733,8 +2739,8 @@ pub fn processJsonRpc(server: *Server, writer: anytype, json: []const u8) !void 
 
     const method_map = .{
         .{ "initialized", void, initializedHandler },
-        // .{"$/cancelRequest"},
-        .{"textDocument/willSave"},
+        .{ "$/cancelRequest", void, nullHandler },
+        .{ "textDocument/willSave", void, nullHandler },
         .{ "initialize", requests.Initialize, initializeHandler },
         .{ "shutdown", void, shutdownHandler },
         .{ "exit", void, exitHandler },

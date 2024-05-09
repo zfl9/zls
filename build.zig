@@ -13,7 +13,7 @@ pub fn build(b: *std.build.Builder) !void {
 
     const mode = b.standardReleaseOptions();
     const exe = b.addExecutable("zls", "src/main.zig");
-    exe.use_stage1 = true;
+    exe.use_stage1 = false;
     const exe_options = b.addOptions();
     exe.addOptions("build_options", exe_options);
 
@@ -136,7 +136,7 @@ pub fn build(b: *std.build.Builder) !void {
         });
     }
 
-    tests.use_stage1 = true;
+    tests.use_stage1 = false;
     tests.addPackage(.{ .name = "zls", .source = .{ .path = "src/zls.zig" }, .dependencies = exe.packages.items });
     tests.setBuildMode(.Debug);
     tests.setTarget(target);
