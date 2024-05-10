@@ -130,6 +130,7 @@ pub fn translate(
     allocator: std.mem.Allocator,
     config: Config,
     include_dirs: []const []const u8,
+    c_macros: []const []const u8,
     source: []const u8,
 ) !?Result {
     const tracy_zone = tracy.trace(@src());
@@ -160,10 +161,9 @@ pub fn translate(
         "--global-cache-dir",
         config.global_cache_path.?,
         "-lc",
-        "--listen=-",
     };
 
-    const argc = base_args.len + 2 * include_dirs.len + 1;
+    const argc = base_args.len + (2 * include_dirs.len) + (2 * c_macros.len) + 1;
     var argv = try std.ArrayListUnmanaged([]const u8).initCapacity(allocator, argc);
     defer argv.deinit(allocator);
 
@@ -174,85 +174,53 @@ pub fn translate(
         argv.appendAssumeCapacity(include_dir);
     }
 
+    for (c_macros) |macro| {
+        argv.appendAssumeCapacity("-D");
+        argv.appendAssumeCapacity(macro);
+    }
+
     argv.appendAssumeCapacity(file_path);
 
-    var process = std.process.Child.init(argv.items, allocator);
-    process.stdin_behavior = .Pipe;
-    process.stdout_behavior = .Pipe;
-    process.stderr_behavior = .Pipe;
+    const argv_str = try std.mem.join(allocator, " ", argv.items);
+    defer allocator.free(argv_str);
+    log.info("{s}", .{argv_str});
 
-    errdefer |err| if (!zig_builtin.is_test) blk: {
-        const joined = std.mem.join(allocator, " ", argv.items) catch break :blk;
-        defer allocator.free(joined);
-        if (process.stderr) |stderr| {
-            const stderr_output = stderr.readToEndAlloc(allocator, std.math.maxInt(usize)) catch break :blk;
-            defer allocator.free(stderr_output);
-            log.err("failed zig translate-c command:\n{s}\nstderr:{s}\nerror:{}\n", .{ joined, stderr_output, err });
-        } else {
-            log.err("failed zig translate-c command:\n{s}\nerror:{}\n", .{ joined, err });
-        }
-    };
-
-    process.spawn() catch |err| {
-        log.err("failed to spawn zig translate-c process, error: {}", .{err});
-        return null;
-    };
-
-    defer _ = process.wait() catch |wait_err| blk: {
-        log.err("zig translate-c process did not terminate, error: {}", .{wait_err});
-        break :blk process.kill() catch |kill_err| {
-            std.debug.panic("failed to terminate zig translate-c process, error: {}", .{kill_err});
-        };
-    };
-
-    var zcs = ZCS.init(.{
-        .gpa = allocator,
-        .in = process.stdout.?,
-        .out = process.stdin.?,
+    const run_result = try std.process.Child.run(.{
+        .allocator = allocator,
+        .argv = argv.items,
+        .max_output_bytes = 100 * 1024 * 1024, // 100 MB
     });
-    defer zcs.deinit();
-
-    try zcs.serveMessage(.{ .tag = .update, .bytes_len = 0 }, &.{});
-    try zcs.serveMessage(.{ .tag = .exit, .bytes_len = 0 }, &.{});
-
-    while (true) {
-        const header = try zcs.receiveMessage();
-        // log.debug("received header: {}", .{header});
-
-        switch (header.tag) {
-            .zig_version => {
-                // log.debug("zig-version: {s}", .{zcs.receive_fifo.readableSliceOfLen(header.bytes_len)});
-                zcs.pooler.fifo(.in).discard(header.bytes_len);
-            },
-            .emit_bin_path => {
-                const body_size = @sizeOf(std.zig.Server.Message.EmitBinPath);
-                if (header.bytes_len <= body_size) return error.InvalidResponse;
-
-                _ = try zcs.receiveEmitBinPath();
-
-                const trailing_size = header.bytes_len - body_size;
-                const result_path = zcs.pooler.fifo(.in).readableSliceOfLen(trailing_size);
-
-                return Result{ .success = try URI.fromPath(allocator, std.mem.sliceTo(result_path, '\n')) };
-            },
-            .error_bundle => {
-                const error_bundle_header = try zcs.receiveErrorBundle();
-
-                const extra = try zcs.receiveIntArray(allocator, error_bundle_header.extra_len);
-                errdefer allocator.free(extra);
-
-                const string_bytes = try zcs.receiveBytes(allocator, error_bundle_header.string_bytes_len);
-                errdefer allocator.free(string_bytes);
-
-                const error_bundle = std.zig.ErrorBundle{ .string_bytes = string_bytes, .extra = extra };
-
-                return Result{ .failure = error_bundle };
-            },
-            else => {
-                log.warn("received unexpected message {} from zig compile server", .{header.tag});
+    switch (run_result.term) {
+        .Exited => |code| {
+            if (code != 0) {
+                log.err("translate-c failed: ({d}) {s}", .{ code, run_result.stderr });
                 return null;
-            },
-        }
+            }
+
+            const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");
+            defer allocator.free(cwd_path);
+
+            const abs_path = try std.fs.path.join(allocator, &.{ cwd_path, "zig-cache", "cimport.zig" });
+            defer allocator.free(abs_path);
+
+            // create tmp file
+            var cimport_zig_file = std.fs.createFileAbsolute(abs_path, .{}) catch |err| {
+                log.err("create 'cimport.zig' failed: {}", .{err});
+                return null;
+            };
+            defer cimport_zig_file.close();
+
+            cimport_zig_file.writeAll(run_result.stdout) catch |err| {
+                log.err("write 'cimport.zig' failed: {}", .{err});
+                return null;
+            };
+
+            return Result{ .success = try URI.fromPath(allocator, abs_path) };
+        },
+        else => {
+            log.err("translate-c failed: unknown error", .{});
+            return null;
+        },
     }
 }
 

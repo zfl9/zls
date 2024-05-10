@@ -759,7 +759,7 @@ fn completeFileSystemStringLiteral(builder: *Builder, pos_context: Analyser.Posi
     if (std.fs.path.isAbsolute(completing) and pos_context != .import_string_literal) {
         try search_paths.append(builder.arena, completing);
     } else if (pos_context == .cinclude_string_literal) {
-        _ = store.collectIncludeDirs(builder.arena, builder.orig_handle, &search_paths) catch |err| {
+        _ = store.collectIncludeDirs(builder.arena, &search_paths, null) catch |err| {
             log.err("failed to resolve include paths: {}", .{err});
             return;
         };
@@ -806,8 +806,7 @@ fn completeFileSystemStringLiteral(builder: *Builder, pos_context: Analyser.Posi
     }
 
     if (completing.len == 0 and pos_context == .import_string_literal) {
-        if (try builder.orig_handle.getAssociatedBuildFileUri(store)) |uri| blk: {
-            const build_file = store.getBuildFile(uri).?;
+        if (store.build_file) |build_file| blk: {
             const build_config = build_file.tryLockConfig() orelse break :blk;
             defer build_file.unlockConfig();
 
@@ -820,7 +819,7 @@ fn completeFileSystemStringLiteral(builder: *Builder, pos_context: Analyser.Posi
                 }, {});
             }
         } else if (DocumentStore.isBuildFile(builder.orig_handle.uri)) blk: {
-            const build_file = store.getBuildFile(builder.orig_handle.uri) orelse break :blk;
+            const build_file = store.build_file orelse break :blk;
             const build_config = build_file.tryLockConfig() orelse break :blk;
             defer build_file.unlockConfig();
 

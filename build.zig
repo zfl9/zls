@@ -32,7 +32,7 @@ pub fn build(b: *Build) !void {
     const enable_tracy_callstack = b.option(bool, "enable_tracy_callstack", "Enable callstack graphs.") orelse enable_tracy;
     const coverage = b.option(bool, "generate_coverage", "Generate coverage data with kcov") orelse false;
     const test_filters = b.option([]const []const u8, "test-filter", "Skip tests that do not match filter") orelse &[0][]const u8{};
-    const data_version = b.option([]const u8, "data_version", "The Zig version your compiler is.");
+    const data_version: ?[]const u8 = "0.10.1"; //b.option([]const u8, "data_version", "The Zig version your compiler is.");
     const data_version_path = b.option([]const u8, "version_data_path", "Manually specify zig language reference file");
     const override_version_data_file_path = b.option([]const u8, "version_data_file_path", "Relative path to version data file (if none, will be named with timestamp)");
     const use_llvm = b.option(bool, "use_llvm", "Use Zig's llvm code backend");

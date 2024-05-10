@@ -5,7 +5,7 @@ const build_options = @import("build_options");
 // There should be no need to have a build runner for minor patches (e.g. 0.10.1)
 pub const BuildRunnerVersion = enum {
     // master,
-    @"0.12.0",
+    @"0.10.1",
 
     pub fn isTaggedRelease(version: BuildRunnerVersion) bool {
         return !@hasField(BuildRunnerVersion, "master") or version != .master;

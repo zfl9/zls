@@ -18,6 +18,7 @@ const InternPool = @import("analyser/analyser.zig").InternPool;
 const Transport = @import("Transport.zig");
 const known_folders = @import("known-folders");
 const BuildRunnerVersion = @import("build_runner/BuildRunnerVersion.zig").BuildRunnerVersion;
+const URI = @import("uri.zig");
 
 const signature_help = @import("features/signature_help.zig");
 const references = @import("features/references.zig");
@@ -40,6 +41,7 @@ allocator: std.mem.Allocator,
 config: Config = .{},
 /// will default to lookup in the system and user configuration folder provided by known-folders.
 config_path: ?[]const u8 = null,
+config_loaded: bool = false,
 document_store: DocumentStore,
 transport: ?*Transport = null,
 offset_encoding: offsets.Encoding = .@"utf-16",
@@ -812,6 +814,11 @@ pub fn updateConfiguration2(server: *Server, new_config: Config) error{OutOfMemo
 }
 
 pub fn updateConfiguration(server: *Server, new_config: configuration.Configuration) error{OutOfMemory}!void {
+    // Don't update because there are bugs that can cause configuration to be lost.
+    if (server.config_loaded)
+        return;
+    server.config_loaded = true;
+
     // NOTE every changed configuration will increase the amount of memory allocated by the arena
     // This is unlikely to cause any big issues since the user is probably not going set settings
     // often in one session
@@ -839,9 +846,9 @@ pub fn updateConfiguration(server: *Server, new_config: configuration.Configurat
     const new_zig_lib_path =
         new_config.zig_lib_path != null and
         (server.config.zig_lib_path == null or !std.mem.eql(u8, server.config.zig_lib_path.?, new_config.zig_lib_path.?));
-    const new_build_runner_path =
-        new_config.build_runner_path != null and
-        (server.config.build_runner_path == null or !std.mem.eql(u8, server.config.build_runner_path.?, new_config.build_runner_path.?));
+    // const new_build_runner_path =
+    //     new_config.build_runner_path != null and
+    //     (server.config.build_runner_path == null or !std.mem.eql(u8, server.config.build_runner_path.?, new_config.build_runner_path.?));
 
     inline for (std.meta.fields(Config)) |field| {
         if (@field(new_cfg, field.name)) |new_config_value| {
@@ -880,12 +887,16 @@ pub fn updateConfiguration(server: *Server, new_config: configuration.Configurat
 
     server.document_store.config = DocumentStore.Config.fromMainConfig(server.config);
 
-    if (new_zig_exe_path or new_build_runner_path) blk: {
-        if (!std.process.can_spawn) break :blk;
+    // load build.zig
+    b: {
+        const build_file_path = std.fs.cwd().realpathAlloc(server.allocator, "build.zig") catch break :b;
+        defer server.allocator.free(build_file_path);
 
-        for (server.document_store.build_files.keys()) |build_file_uri| {
-            try server.document_store.invalidateBuildFile(build_file_uri);
-        }
+        const build_file_uri = try URI.fromPath(server.allocator, build_file_path);
+        defer server.allocator.free(build_file_uri);
+
+        log.info("load build file: {s}", .{build_file_path});
+        _ = server.document_store.loadBuildFile(build_file_uri);
     }
 
     if (new_zig_exe_path or new_zig_lib_path) {
@@ -1273,7 +1284,7 @@ fn saveDocumentHandler(server: *Server, arena: std.mem.Allocator, notification: 
     const uri = notification.textDocument.uri;
 
     if (std.process.can_spawn and DocumentStore.isBuildFile(uri)) {
-        try server.document_store.invalidateBuildFile(uri);
+        // TODO: reload build file
     }
 
     if (std.process.can_spawn and server.config.enable_build_on_save) {
