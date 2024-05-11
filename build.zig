@@ -322,6 +322,12 @@ fn getVersion(b: *Build) struct {
     const version_string = b.fmt("{d}.{d}.{d}", .{ zls_version.major, zls_version.minor, zls_version.patch });
     const build_root_path = b.build_root.path orelse ".";
 
+    if (true)
+        return .{
+            .version_string = version_string,
+            .precise_version_string = if (zls_version_is_tagged) version_string else null,
+        };
+
     var code: u8 = undefined;
     const git_describe_untrimmed = b.runAllowFail(&[_][]const u8{
         "git", "-C", build_root_path, "describe", "--match", "*.*.*", "--tags",

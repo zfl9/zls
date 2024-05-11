@@ -337,12 +337,29 @@ pub fn isInstanceCall(
     return analyser.firstParamIs(func_ty, container_ty);
 }
 
-pub fn hasSelfParam(analyser: *Analyser, func_ty: Type) error{OutOfMemory}!bool {
-    const func_node = func_ty.data.other; // this assumes that function types can only be Ast nodes
+pub fn hasSelfParam(analyser: *Analyser, func_type: Type) error{OutOfMemory}!bool {
+    const func_node = func_type.data.other; // this assumes that function types can only be Ast nodes
     const fn_token = func_node.handle.tree.nodes.items(.main_token)[func_node.node];
     const in_container = try innermostContainer(func_node.handle, func_node.handle.tree.tokens.items(.start)[fn_token]);
     std.debug.assert(in_container.is_type_val);
-    return analyser.firstParamIs(func_ty, in_container);
+    return analyser.firstParamIs(func_type, in_container) or analyser.firstParamIsSelf(func_type);
+}
+
+fn firstParamIsSelf(analyser: *Analyser, func_type: Type) bool {
+    const func_handle = func_type.data.other;
+
+    var buffer: [1]Ast.Node.Index = undefined;
+    const func = func_handle.handle.tree.fullFnProto(&buffer, func_handle.node).?;
+
+    var it = func.iterate(&func_handle.handle.tree);
+    const param = ast.nextFnParam(&it) orelse return false;
+
+    if (param.name_token) |token| {
+        const param_name = func_handle.handle.tree.tokenSlice(token);
+        return std.mem.eql(u8, "self", param_name);
+    }
+
+    return false;
 }
 
 pub fn firstParamIs(
