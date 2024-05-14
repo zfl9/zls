@@ -200,6 +200,8 @@ pub fn translate(
             const cwd_path = try std.fs.cwd().realpathAlloc(allocator, ".");
             defer allocator.free(cwd_path);
 
+            try std.fs.cwd().makePath("zig-cache");
+
             const abs_path = try std.fs.path.join(allocator, &.{ cwd_path, "zig-cache", "cimport.zig" });
             defer allocator.free(abs_path);
 
